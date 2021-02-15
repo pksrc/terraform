@@ -1,0 +1,6 @@
+version: 2
+ethernets:
+  ens192:
+    addresses:
+      - 10.10.20.65/255.255.255.0
+    gateway4: 10.10.20.1

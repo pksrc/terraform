@@ -1,0 +1,15 @@
+#cloud-config
+instance-id: iid-local01
+local-hostname: k8sm-static
+
+network:
+  version: 2
+  ethernets:
+    ens192:
+      addresses: 
+      - 10.10.20.65/24
+      gateway4: 10.10.20.1
+      dhcp4: false
+      nameservers:
+        search: [lab.pdotk.com, pdotk.ddns.net]
+        addresses: [10.10.20.10, 10.10.20.11]

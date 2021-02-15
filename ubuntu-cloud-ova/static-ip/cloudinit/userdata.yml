@@ -1,0 +1,97 @@
+#cloud-config
+
+# sets the hostname
+hostname: k8sm-02
+
+users:
+# Adds a user called 'example' with the password hash of 'passwort', sudo rights and the default ubuntu groups
+# ubuntu: mkpasswd --method=SHA-512 --rounds=4096
+# mac: python3 -c "import crypt; print(crypt.crypt('Ubuntu1!'))"
+  - name: ubuntu
+    passwd: $6$rounds=4096$P0uvlB9.8nsiY67$uuOxYSk6n/74Ds3JtV1mT6xYjOguwTWgNmOeHvcHiQa9zan57l8dvfHE/zlu19fDmJGySNzLmh6K0R2I1AU9o0
+    lock_passwd: false 
+    sudo: ALL=(ALL) ALL
+    groups: [adm, audio, cdrom, dialout, floppy, video, plugdev, dip, netdev]
+  - name: pk
+    plain_text_passwd: pk
+    lock_passwd: false 
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys: 
+    - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDJtJW6mtUAkV6WO2XMHDy10mxIYYrpZSir03+CeaIwyOKIKr5/ro+UkwDysNHEN30TzsF5jW7YGNcEji/3S6Mk5PCzwoMtv/DcpAQ/cCiKUBpXKcqn0LH56+6ifDlijY+nBwojvDSkqRGnU84QuVzbddBmbGk2qGp1R98crltz0q2jxXWehYQ9uvq0plMORwJwIhsUbn/8OCD0aZpfyRkx5pjAyhBIHlUJUX5v+2S9k6wfbfyc9Ov/fmuwTWmXSl3z9MSHMER1wUSA4Ln5ES5ozBFHOXxDHgpXxz0bfCWp8zHWmTZ6eHQCWLktqACLJyM4YIHHIcEUpzXeHLyUhk5H partheeban.kandasamy@gmail.com
+    groups: [adm, audio, cdrom, dialout, floppy, video, plugdev, dip, netdev]
+
+# vim: syntax=yaml
+#
+# This is the configuration syntax that the write_files module
+# will know how to understand. encoding can be given b64 or gzip or (gz+b64).
+# The content will be decoded accordingly and then written to the path that is
+# provided. 
+#
+# Note: Content strings here are truncated for example purposes.
+write_files:
+- path: /etc/netplan/50-cloud-init.yaml
+  content: |
+    network:
+     version: 2
+     ethernets:
+      ens192:
+       addresses: [10.10.20.66/24]
+       gateway4: 10.10.20.1
+       dhcp6: false
+       nameservers:
+         addresses:
+           - 10.10.20.10
+           - 10.10.20.11
+         search:
+           - lab.pdotk.com
+       dhcp4: false
+- path: /etc/sysctl.d/60-disable-ipv6.conf
+  owner: root
+  content: |
+    net.ipv6.conf.all.disable_ipv6=1
+    net.ipv6.conf.default.disable_ipv6=1
+- path: /etc/apt/sources.list.d/kubernetes.list
+  content: |
+    deb https://apt.kubernetes.io/ kubernetes-xenial main
+
+# run commands
+# default: none
+# runcmd contains a list of either lists or a string
+# each item will be executed in order at rc.local like level with
+# output to the console
+# - runcmd only runs during the first boot
+# - if the item is a list, the items will be properly executed as if
+#   passed to execve(3) (with the first arg as the command).
+# - if the item is a string, it will be simply written to the file and
+#   will be interpreted by 'sh'
+#
+# Note, that the list has to be proper yaml, so you have to quote
+# any characters yaml would eat (':' can be problematic)
+runcmd:
+  - netplan --debug apply
+  - sysctl -w net.ipv6.conf.all.disable_ipv6=1
+  - sysctl -w net.ipv6.conf.default.disable_ipv6=1
+  - apt-get -y update
+  - curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add
+  - apt-add-repository "deb http://apt.kubernetes.io/ kubernetes-xenial main"
+  - apt-get install docker.io kubeadm kubelet kubectl -y
+  - add-apt-repository universe
+  - apt-get -y clean
+  - apt-get -y autoremove --purge
+  - [ ls, -l, / ]
+  - [ sh, -xc, "echo $(date) ': hello world!'" ]
+  - [ sh, -c, echo "=========hello world'=========" ]
+  - ls -l /root
+ # Note: Don't write files to /tmp from cloud-init use /run/somedir instead.
+ # Early boot environments can race systemd-tmpfiles-clean LP: #1707222.
+  - mkdir /run/mydir
+  - [ wget, "http://slashdot.org", -O, /run/mydir/index.html ]
+
+# final_message
+# default: cloud-init boot finished at $TIMESTAMP. Up $UPTIME seconds
+# this message is written by cloud-final when the system is finished
+# its first boot
+final_message: "The system is finally up, after $UPTIME seconds"
+
+ 

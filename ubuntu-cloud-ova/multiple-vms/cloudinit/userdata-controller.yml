@@ -1,0 +1,140 @@
+#cloud-config
+
+# sets the hostname
+hostname: pk8smaster
+fqdn: pk8smaster.lab.pdotk.com
+
+users:
+# Adds a user called 'example' with the password hash of 'passwort', sudo rights and the default ubuntu groups
+# ubuntu: mkpasswd --method=SHA-512 --rounds=4096
+# mac: python3 -c "import crypt; print(crypt.crypt('Ubuntu1!'))"
+  - name: ubuntu
+    passwd: $6$rounds=4096$P0uvlB9.8nsiY67$uuOxYSk6n/74Ds3JtV1mT6xYjOguwTWgNmOeHvcHiQa9zan57l8dvfHE/zlu19fDmJGySNzLmh6K0R2I1AU9o0
+    lock_passwd: false 
+    sudo: ALL=(ALL) ALL
+    groups: [adm, audio, cdrom, dialout, floppy, video, plugdev, dip, netdev]
+  - name: pk
+    plain_text_passwd: pk
+    lock_passwd: false 
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys: 
+    - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDJtJW6mtUAkV6WO2XMHDy10mxIYYrpZSir03+CeaIwyOKIKr5/ro+UkwDysNHEN30TzsF5jW7YGNcEji/3S6Mk5PCzwoMtv/DcpAQ/cCiKUBpXKcqn0LH56+6ifDlijY+nBwojvDSkqRGnU84QuVzbddBmbGk2qGp1R98crltz0q2jxXWehYQ9uvq0plMORwJwIhsUbn/8OCD0aZpfyRkx5pjAyhBIHlUJUX5v+2S9k6wfbfyc9Ov/fmuwTWmXSl3z9MSHMER1wUSA4Ln5ES5ozBFHOXxDHgpXxz0bfCWp8zHWmTZ6eHQCWLktqACLJyM4YIHHIcEUpzXeHLyUhk5H partheeban.kandasamy@gmail.com
+    groups: [adm, audio, cdrom, dialout, floppy, video, plugdev, dip, netdev]
+
+# vim: syntax=yaml
+#
+# This is the configuration syntax that the write_files module
+# will know how to understand. encoding can be given b64 or gzip or (gz+b64).
+# The content will be decoded accordingly and then written to the path that is
+# provided. 
+#
+# Note: Content strings here are truncated for example purposes.
+write_files:
+- path: /etc/netplan/50-cloud-init.yaml
+  content: |
+    network:
+     version: 2
+     ethernets:
+      ens192:
+       addresses: [10.10.20.66/24]
+       gateway4: 10.10.20.1
+       dhcp6: false
+       nameservers:
+         addresses:
+           - 10.10.20.10
+           - 10.10.20.11
+         search:
+           - lab.pdotk.com
+       dhcp4: false
+- path: /etc/sysctl.d/60-disable-ipv6.conf
+  owner: root
+  content: |
+    net.ipv6.conf.all.disable_ipv6=1
+    net.ipv6.conf.default.disable_ipv6=1
+- path: /etc/apt/sources.list.d/kubernetes.list
+  content: |
+    deb https://apt.kubernetes.io/ kubernetes-xenial main
+- path: /etc/modules-load.d/containerd.conf
+  content: |
+    overlay
+    br_netfilter
+- path: /etc/sysctl.d/99-kubernetes-cri.conf
+  content: |
+    net.bridge.bridge-nf-call-iptables  = 1
+    net.ipv4.ip_forward                 = 1
+    net.bridge.bridge-nf-call-ip6tables = 1
+
+# run commands
+# default: none
+# runcmd contains a list of either lists or a string
+# each item will be executed in order at rc.local like level with
+# output to the console
+# - runcmd only runs during the first boot
+# - if the item is a list, the items will be properly executed as if
+#   passed to execve(3) (with the first arg as the command).
+# - if the item is a string, it will be simply written to the file and
+#   will be interpreted by 'sh'
+#
+# Note, that the list has to be proper yaml, so you have to quote
+# any characters yaml would eat (':' can be problematic)
+runcmd:
+  # Note: Setting Static IP
+  - netplan --debug apply
+  # Note: Disabling IPv6
+  - sysctl -w net.ipv6.conf.all.disable_ipv6=1
+  - sysctl -w net.ipv6.conf.default.disable_ipv6=1
+  # Note: Setting up APT for kubernetes
+  - apt-get -y update
+  - curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add
+  - apt-add-repository "deb http://apt.kubernetes.io/ kubernetes-xenial main"
+  # Note: Pre-reqs for containerd
+  - modprobe overlay
+  - modprobe br_netfilter
+  - sysctl --system
+  # Note: Installing K8s packages
+  - apt-get install -y containerd
+  - apt-get install kubeadm kubelet kubectl -y
+  # Note: Setting up Containerd
+  - mkdir -p /etc/containerd
+  - containerd config default | tee /etc/containerd/config.toml
+  - curl -o /etc/containerd/config.toml https://raw.githubusercontent.com/pksrc/terraform/main/ubuntu-cloud-ova/multiple-vms/containerd/config.toml
+  - systemctl restart containerd
+  # Note: Cluster Setup
+  - echo "Configuring Kubernetes on - $HOSTNAME"
+  - mkdir -p /run/pknetes
+  - curl -o /run/pknetes/init-config.yaml https://raw.githubusercontent.com/pksrc/terraform/main/ubuntu-cloud-ova/multiple-vms/kubeadm/init-config.yaml
+  - sed -i "s/pk8smaster/$HOSTNAME/g" /run/pknetes/init-config.yaml #apiserver location
+  - sed -i "s/1.2.3.4/$(hostname -I | awk '{print $1}')/g" /run/pknetes/init-config.yaml
+  - kubeadm init --config /run/pknetes/init-config.yaml
+  - export KUBECONFIG=/etc/kubernetes/admin.conf
+  # Note: Installing Pod Network add-on
+  - curl https://raw.githubusercontent.com/pksrc/terraform/main/ubuntu-cloud-ova/multiple-vms/kubeadm/calico.yaml -o /run/pknetes/calico.yaml
+  - sed -i "s/<ETCD_IP>/$(hostname -I | awk '{print $1}')/g" /run/pknetes/calico.yaml
+  - sed -i "s/<ETCD_PORT>/2379/g" /run/pknetes/calico.yaml
+  - >
+    sed -i "s/# etcd-key: null/etcd-key: $(sudo cat /etc/kubernetes/pki/etcd/server.key | base64 -w 0)/g" /run/pknetes/calico.yaml
+  - >
+    sed -i "s/# etcd-cert: null/etcd-cert: $(cat /etc/kubernetes/pki/etcd/server.crt | base64 -w 0)/g" /run/pknetes/calico.yaml
+  - >
+    sed -i "s/# etcd-ca: null/etcd-ca: $(sudo cat /etc/kubernetes/pki/etcd/ca.crt | base64 -w 0)/g" /run/pknetes/calico.yaml
+  - >
+    sed -i 's/etcd_ca: ""/etcd_ca: "\/calico-secrets\/etcd-ca"/g' /run/pknetes/calico.yaml
+  - >
+    sed -i 's/etcd_cert: ""/etcd_cert: "\/calico-secrets\/etcd-cert"/g' /run/pknetes/calico.yaml
+  - >
+    sed -i 's/etcd_key: ""/etcd_key: "\/calico-secrets\/etcd-key"/g' /run/pknetes/calico.yaml
+  - kubectl apply -f /run/pknetes/calico.yaml 
+  # Note: Clean up
+  - apt-get -y clean
+  - apt-get -y autoremove --purge
+  # Note: Info about system
+  - [ ls, -l, / ]
+
+# final_message
+# default: cloud-init boot finished at $TIMESTAMP. Up $UPTIME seconds
+# this message is written by cloud-final when the system is finished
+# its first boot
+final_message: "The system is finally up, after $UPTIME seconds"
+
+ 
